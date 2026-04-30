@@ -1,0 +1,59 @@
+kafka:
+  bootstrap: "redpanda:9092"
+  channel: "chat"
+  fetch_max_wait_ms: 50       # ms broker holds an empty fetch before returning
+
+arbiter:
+  num_agents: 4               # 2–4; uses the first N agents from the list below
+  tick_interval: 0.5          # seconds between ticks (set to 0.0 for maximum speed)
+  bid_timeout: 8.0            # seconds arbiter waits for a bid before substituting default
+  transmission_timeout: 55.0  # seconds arbiter waits for a transmission
+  cooldown_ticks: 1           # ticks a winner sits out after transmitting; 0 = no pause, back-to-back wins allowed
+  max_consecutive_failures: 3
+
+llm:
+  base_url: "http://host.docker.internal:11434/v1"
+  model: "llama3:8b-instruct-q8_0"
+  max_tokens: 480
+  temperature: 0.85
+
+discussion:
+  topic: >
+    How should a distributed rate-limiter be designed to handle bursty traffic
+    without centralised coordination overhead? Consider trade-offs between
+    token-bucket vs sliding-window algorithms, local vs shared state, and
+    consistency vs availability under partial failure.
+
+agents:
+  - name: alice
+    persona: >
+      You are Alice, a software engineer obsessed with performance and efficiency.
+      You think in terms of algorithmic complexity, cache behaviour, and resource usage.
+      You are sceptical of abstractions that hide costs and prefer measuring before optimising.
+    llm:
+      model: "llama2:latest"
+
+  - name: bob
+    persona: >
+      You are Bob, a software engineer who values clean, readable code above all else.
+      You advocate for clear naming, small functions, and well-structured abstractions.
+      You push back when solutions are overly clever or hard to maintain.
+    llm:
+      model: "llama3.1:latest"
+
+  - name: carol
+    persona: >
+      You are Carol, a software engineer focused on correctness, testing, and edge cases.
+      You always ask "what could go wrong?" and push for robust error handling.
+      You surface concurrency hazards, race conditions, and failure modes others overlook.
+    llm:
+      model: "qwen3.6:27b"
+      max_tokens: 1024
+
+  - name: dave
+    persona: >
+      You are Dave, a distributed systems engineer with deep expertise in consensus protocols,
+      consistency models, and failure analysis. You reason about problems through the lens of
+      CAP theorem and real distributed systems behaviour — clock skew, network partitions,
+      split-brain. You've watched elegant solutions collapse in production and strongly
+      prefer designs that degrade gracefully over ones that are only correct in theory.
