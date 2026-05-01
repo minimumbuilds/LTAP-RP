@@ -26,6 +26,7 @@ async def main() -> None:
 
     k = cfg.kafka
     llm = agent_def.effective_llm(cfg.llm)
+    participants = [a.name for a in cfg.active_agents()]
 
     agent = LLMAgent(
         name=name,
@@ -33,6 +34,7 @@ async def main() -> None:
         topic=cfg.discussion_topic,
         base_url=llm.base_url,
         model=llm.model,
+        participants=participants,
         max_tokens=llm.max_tokens,
         temperature=llm.temperature,
     )

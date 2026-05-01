@@ -1,4 +1,5 @@
 """LLM-backed LTAP participant powered by Ollama."""
+import json
 import logging
 import random
 import re
@@ -12,18 +13,23 @@ log = logging.getLogger(__name__)
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _THINK_INNER_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
 
+_TX_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "transmission",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "properties": {
+                "content": {"type": "string"},
+                "addressed_to": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            },
+            "required": ["content", "addressed_to"],
+            "additionalProperties": False,
+        },
+    },
+}
 
-def _strip_think(raw: str) -> str:
-    content = _THINK_RE.sub("", raw).strip()
-    if content:
-        return content
-    # Model output was entirely <think>...</think> — extract the last non-empty
-    # paragraph from inside the block as a best-effort response.
-    m = _THINK_INNER_RE.search(raw)
-    if m:
-        paragraphs = [p.strip() for p in m.group(1).split("\n\n") if p.strip()]
-        return paragraphs[-1] if paragraphs else ""
-    return ""
 _MAX_HISTORY = 8
 
 _TURN_DIRECTIVES = [
@@ -38,11 +44,25 @@ _TURN_DIRECTIVES = [
 ]
 
 
+def _strip_think(raw: str) -> str:
+    content = _THINK_RE.sub("", raw).strip()
+    if content:
+        return content
+    m = _THINK_INNER_RE.search(raw)
+    if m:
+        paragraphs = [p.strip() for p in m.group(1).split("\n\n") if p.strip()]
+        return paragraphs[-1] if paragraphs else ""
+    return ""
+
+
 class LLMAgent(LTAPParticipant):
     """LTAP participant that calls an Ollama model to generate transmissions.
 
     Bid priority: 0.92 when the last message was directed at this agent,
     otherwise uniform random in [0.35, 0.75].  Always wants to send.
+
+    Transmissions use constrained JSON output (response_format=json_schema).
+    Models that do not support structured output are not supported.
     """
 
     def __init__(
@@ -52,7 +72,8 @@ class LLMAgent(LTAPParticipant):
         topic: str,
         base_url: str,
         model: str,
-        max_tokens: int = 180,
+        participants: list[str],
+        max_tokens: int = 480,
         temperature: float = 0.85,
     ) -> None:
         super().__init__(name)
@@ -64,31 +85,33 @@ class LLMAgent(LTAPParticipant):
         self._client = AsyncOpenAI(base_url=base_url, api_key="ollama")
         self._history: list[dict] = []
         self._addressed = False
+        self._others = [p for p in participants if p != name]
 
     def _system_prompt(self) -> str:
+        others = ", ".join(self._others)
         return (
             f"{self._persona}\n\n"
             f"You are in a multi-agent engineering discussion. Topic:\n"
             f"  {self._topic}\n\n"
+            f"Other participants: {others}\n\n"
             "Rules:\n"
             "- Speak in first person as yourself.\n"
             "- Be direct and concise: 2–4 sentences maximum.\n"
             "- Advance the conversation: agree, push back, introduce a concrete example, "
             "raise a failure mode, or propose a specific design. Each turn must move the "
             "discussion forward — do not restate what was already said.\n"
-            "- You may address a specific participant by name to hand the conversation to them.\n"
             "- CRITICAL: Never open by echoing, paraphrasing, or restating the previous "
             "message's words or phrases. Your opening sentence must introduce a point that "
             "has not been made yet.\n"
             "- Never open with acknowledgment phrases like '[Name] is right', '[Name] is "
             "correct', 'Exactly', 'That's a good point', 'I think', 'I believe', "
             "'As [name]', or any similar preamble. Your first word must be part of your argument.\n"
-            "- Write in plain conversational prose. No markdown, no bold text, no bullet points, "
-            "no headers. Do not use the structural pattern 'X creates a Y hazard/failure/problem' "
-            "— vary your sentence structure each turn.\n"
-            "- Vary your contribution type: sometimes state a concrete position with a specific "
-            "number or system name, sometimes push back on what was just said, sometimes propose "
-            "a specific implementation detail, sometimes ask the group a pointed question."
+            "- Write in plain conversational prose. No markdown, no bold text, no bullet points.\n"
+            "- Vary your contribution type each turn.\n\n"
+            "Output a JSON object with exactly these fields:\n"
+            '  "content": your message as a plain text string\n'
+            '  "addressed_to": the name of the participant you are directing your remark to '
+            f"(one of: {others}), or null if speaking to the group"
         )
 
     async def generate_bid(self, request: BidRequest) -> Bid:
@@ -115,17 +138,17 @@ class LLMAgent(LTAPParticipant):
                 messages=messages,
                 max_tokens=self._max_tokens,
                 temperature=self._temperature,
+                response_format=_TX_SCHEMA,
             )
             raw = resp.choices[0].message.content or ""
-            content = _strip_think(raw)
+            data = json.loads(_strip_think(raw))
+            content = (data.get("content") or "").strip()
+            addressed_to = data.get("addressed_to") or None
         except Exception:
-            log.exception("[%s] Ollama call failed", self.participant_id)
-            content = ""
+            log.exception("[%s] generation failed", self.participant_id)
+            return TransmissionResponse(content="")
 
-        if not content:
-            content = f"[{self.participant_id} has nothing to add right now]"
-
-        return TransmissionResponse(content=content)
+        return TransmissionResponse(content=content, addressed_to=addressed_to)
 
     async def on_event(self, event: BusEvent) -> None:
         if event.type != "transmission":
