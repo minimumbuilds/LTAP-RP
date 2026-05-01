@@ -59,6 +59,9 @@ _HTML = """<!DOCTYPE html>
             padding: 14px 20px; flex-shrink: 0; }
   #header h1 { font-size: 18px; font-weight: 700; letter-spacing: .02em; }
   #header h1 span { color: var(--muted); font-weight: 400; font-size: 14px; margin-left: 8px; }
+  #header nav { margin-top: 8px; display: flex; gap: 12px; }
+  #header nav a { font-size: 12px; color: var(--subtext); text-decoration: none; }
+  #header nav a:hover { color: var(--text); }
   #topic-line { margin-top: 6px; font-size: 12px; color: var(--subtext);
                 max-width: 900px; line-height: 1.5; }
 
@@ -113,6 +116,7 @@ _HTML = """<!DOCTYPE html>
   <div id="header">
     <h1>LTAP Chat <span id="channel-label"></span></h1>
     <div id="topic-line"></div>
+    <nav><a href="/">Chat</a><a href="/context">Agent Contexts</a></nav>
   </div>
   <div id="agents-bar"></div>
   <div id="messages"></div>
@@ -238,6 +242,232 @@ boot();
 </html>"""
 
 
+_CONTEXT_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LTAP — Agent Contexts</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f172a; --surface: #1e293b; --border: #334155;
+    --muted: #64748b; --text: #e2e8f0; --subtext: #94a3b8;
+    --c0: #60a5fa; --c0bg: #1e3a5f;
+    --c1: #4ade80; --c1bg: #14532d;
+    --c2: #fb923c; --c2bg: #7c2d12;
+    --c3: #c084fc; --c3bg: #4a1d96;
+    --c4: #f472b6; --c4bg: #831843;
+  }
+  html, body { height: 100%; background: var(--bg); color: var(--text);
+               font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  #app { display: flex; flex-direction: column; height: 100vh; }
+
+  #header { background: var(--surface); border-bottom: 1px solid var(--border);
+            padding: 14px 20px; flex-shrink: 0; }
+  #header h1 { font-size: 18px; font-weight: 700; }
+  #header h1 span { color: var(--muted); font-weight: 400; font-size: 14px; margin-left: 8px; }
+  #header nav { margin-top: 8px; display: flex; gap: 12px; }
+  #header nav a { font-size: 12px; color: var(--subtext); text-decoration: none; }
+  #header nav a:hover { color: var(--text); }
+  #header nav a.active { color: var(--text); font-weight: 600; }
+
+  #grid { flex: 1; overflow: hidden; display: flex; gap: 0; }
+
+  .agent-col { flex: 1; display: flex; flex-direction: column;
+               border-right: 1px solid var(--border); min-width: 0; }
+  .agent-col:last-child { border-right: none; }
+
+  .col-header { padding: 10px 14px; background: var(--surface);
+                border-bottom: 1px solid var(--border); flex-shrink: 0;
+                display: flex; align-items: center; gap: 8px; }
+  .col-title { font-size: 13px; font-weight: 700; }
+  .col-badge { font-size: 10px; color: var(--muted); margin-left: auto; }
+
+  .ctx-list { flex: 1; overflow-y: auto; padding: 10px 8px;
+              display: flex; flex-direction: column; gap: 6px; }
+
+  .ctx-msg { padding: 8px 10px; border-radius: 6px; font-size: 12px;
+             line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+  .ctx-msg.role-assistant { border-left: 3px solid; }
+  .ctx-msg.role-user { background: var(--surface); border-left: 3px solid var(--border); color: var(--subtext); }
+  .role-label { font-size: 10px; font-weight: 700; margin-bottom: 4px;
+                text-transform: uppercase; letter-spacing: .05em; opacity: .7; }
+
+  .ctx-list::-webkit-scrollbar { width: 4px; }
+  .ctx-list::-webkit-scrollbar-track { background: transparent; }
+  .ctx-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  #status-bar { display: flex; align-items: center; gap: 8px; padding: 8px 20px;
+                background: var(--surface); border-top: 1px solid var(--border);
+                font-size: 12px; color: var(--subtext); flex-shrink: 0; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot.ok { background: #4ade80; } .dot.warn { background: #fbbf24; } .dot.err { background: #f87171; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="header">
+    <h1>LTAP Chat <span id="channel-label"></span></h1>
+    <nav><a href="/">Chat</a><a href="/context" class="active">Agent Contexts</a></nav>
+  </div>
+  <div id="grid"></div>
+  <div id="status-bar">
+    <div class="dot warn" id="dot"></div>
+    <span id="status-text">Connecting…</span>
+    <span style="margin-left:auto" id="tick-count"></span>
+  </div>
+</div>
+
+<script>
+const MAX_HISTORY = 8;   // must match _MAX_HISTORY in llm_agent.py
+
+const PALETTE = [
+  { fg: "#60a5fa", bg: "#1e3a5f" },
+  { fg: "#4ade80", bg: "#14532d" },
+  { fg: "#fb923c", bg: "#7c2d12" },
+  { fg: "#c084fc", bg: "#4a1d96" },
+  { fg: "#f472b6", bg: "#831843" },
+];
+const agentColor = {};
+function colorFor(name) {
+  if (!agentColor[name]) {
+    const idx = Object.keys(agentColor).length % PALETTE.length;
+    agentColor[name] = PALETTE[idx];
+  }
+  return agentColor[name];
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+// ---------------------------------------------------------------------------
+// Context reconstruction
+// Per-agent context mirrors llm_agent.py on_event logic:
+//   own message  → { role: "assistant", content: content }
+//   other's msg  → { role: "user",      content: "[sender]: content" }
+// Sliding window = last MAX_HISTORY entries.
+// ---------------------------------------------------------------------------
+
+let allMessages = [];   // full global history
+let agents = [];
+
+function rebuildContexts() {
+  const contexts = {};
+  agents.forEach(name => contexts[name] = []);
+
+  allMessages.forEach(m => {
+    agents.forEach(name => {
+      if (m.sender === name) {
+        contexts[name].push({ role: "assistant", content: m.content, sender: name });
+      } else {
+        contexts[name].push({ role: "user",
+                              content: "[" + m.sender + "]: " + m.content,
+                              sender: m.sender });
+      }
+    });
+  });
+
+  // Apply sliding window
+  agents.forEach(name => {
+    contexts[name] = contexts[name].slice(-MAX_HISTORY);
+  });
+
+  return contexts;
+}
+
+function renderContexts() {
+  const contexts = rebuildContexts();
+  agents.forEach(name => {
+    const list = document.getElementById("ctx-" + name);
+    if (!list) return;
+    const c = colorFor(name);
+    list.innerHTML = "";
+    const window = contexts[name];
+    if (!window.length) {
+      list.innerHTML = '<div style="color:var(--muted);font-size:12px;padding:8px">No messages yet</div>';
+      return;
+    }
+    window.forEach((entry, i) => {
+      const div = document.createElement("div");
+      div.className = "ctx-msg role-" + entry.role;
+      const isAssistant = entry.role === "assistant";
+      if (isAssistant) {
+        div.style.borderLeftColor = c.fg;
+        div.style.background = c.bg;
+        div.style.color = c.fg;
+      }
+      const label = isAssistant ? name : entry.sender;
+      div.innerHTML = '<div class="role-label">' + esc(label) + ' (' + entry.role + ')</div>'
+                    + esc(entry.content);
+      list.appendChild(div);
+    });
+    // badge
+    const badge = document.getElementById("badge-" + name);
+    if (badge) badge.textContent = window.length + "/" + MAX_HISTORY + " msgs";
+  });
+
+  document.getElementById("tick-count").textContent =
+    allMessages.length ? "tick " + allMessages[allMessages.length - 1].tick : "";
+}
+
+function buildGrid() {
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+  agents.forEach(name => {
+    const c = colorFor(name);
+    const col = document.createElement("div");
+    col.className = "agent-col";
+    col.innerHTML =
+      '<div class="col-header">'
+      + '<div class="col-title" style="color:' + c.fg + '">' + esc(name) + '</div>'
+      + '<div class="col-badge" id="badge-' + name + '">0/' + MAX_HISTORY + ' msgs</div>'
+      + '</div>'
+      + '<div class="ctx-list" id="ctx-' + name + '"></div>';
+    grid.appendChild(col);
+  });
+}
+
+function setStatus(state, text) {
+  document.getElementById("dot").className = "dot " + state;
+  document.getElementById("status-text").textContent = text;
+}
+
+async function boot() {
+  try {
+    const meta = await fetch("/meta").then(r => r.json());
+    document.getElementById("channel-label").textContent = "#" + meta.channel;
+    agents = meta.agents;
+    agents.forEach(n => colorFor(n));   // seed palette in order
+    buildGrid();
+  } catch(e) { setStatus("err", "Failed to load meta"); return; }
+
+  try {
+    allMessages = await fetch("/history").then(r => r.json());
+    renderContexts();
+  } catch(e) { /* non-fatal */ }
+
+  const es = new EventSource("/stream");
+  es.onopen  = () => setStatus("ok",  "Live");
+  es.onerror = () => setStatus("err", "Disconnected — reconnecting…");
+  es.onmessage = e => {
+    allMessages.push(JSON.parse(e.data));
+    renderContexts();
+    // scroll each context list to bottom
+    agents.forEach(name => {
+      const list = document.getElementById("ctx-" + name);
+      if (list) list.scrollTop = list.scrollHeight;
+    });
+  };
+}
+
+boot();
+</script>
+</body>
+</html>"""
+
+
 # ---------------------------------------------------------------------------
 # Chat service — Kafka consumer + subscriber fan-out
 # ---------------------------------------------------------------------------
@@ -335,6 +565,10 @@ async def handle_meta(request: web.Request) -> web.Response:
     })
 
 
+async def handle_context(request: web.Request) -> web.Response:
+    return web.Response(text=_CONTEXT_HTML, content_type="text/html")
+
+
 async def handle_stream(request: web.Request) -> web.StreamResponse:
     svc: ChatService = request.app["svc"]
     resp = web.StreamResponse()
@@ -370,6 +604,7 @@ async def main() -> None:
     app["svc"] = svc
     app["cfg"] = cfg
     app.router.add_get("/", handle_index)
+    app.router.add_get("/context", handle_context)
     app.router.add_get("/history", handle_history)
     app.router.add_get("/meta", handle_meta)
     app.router.add_get("/stream", handle_stream)
