@@ -32,7 +32,7 @@ Volume-mounted into every service at `/config/config.yaml`. Restart (not rebuild
 
 - `arbiter.num_agents` — how many agents are active (2–4, uses first N from the agents list)
 - `arbiter.tick_interval` — seconds between ticks; set to `0.0` for maximum speed
-- `arbiter.cooldown_ticks` — ticks a winner sits out before bidding again
+- `arbiter.cooldown_ticks` — ticks a winner's bids are dampened (×0.3) after a win; the winner stays eligible
 - `llm.*` — global LLM defaults (base_url, model, max_tokens, temperature)
 - `agents[].llm.*` — per-agent overrides; any field omitted inherits from global
 

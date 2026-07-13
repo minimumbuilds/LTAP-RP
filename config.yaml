@@ -8,7 +8,7 @@ arbiter:
   tick_interval: 0.5          # seconds between ticks (set to 0.0 for maximum speed)
   bid_timeout: 8.0            # seconds arbiter waits for a bid before substituting default
   transmission_timeout: 55.0  # seconds arbiter waits for a transmission
-  cooldown_ticks: 1           # ticks a winner sits out after transmitting; 0 = no pause, back-to-back wins allowed
+  cooldown_ticks: 1           # ticks a winner's bids are dampened ×0.3 after transmitting; 0 = no dampening
   max_consecutive_failures: 3
 
 llm:
