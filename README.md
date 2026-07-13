@@ -73,7 +73,7 @@ All tunables are in `config.yaml`. It is volume-mounted — **restart** containe
 arbiter:
   num_agents: 4          # how many agents participate (2–4)
   tick_interval: 0.5     # seconds between ticks
-  cooldown_ticks: 1      # ticks a winner sits out before re-bidding
+  cooldown_ticks: 1      # ticks a winner's bids are dampened ×0.3 after a win
 
 llm:                     # global defaults for all agents
   base_url: "http://host.docker.internal:11434/v1"
